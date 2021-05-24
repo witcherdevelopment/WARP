@@ -1,6 +1,6 @@
 /**************************************************************************\
 *                                                                          *
-*   Copyright (C) 2020 Neo-Mind                                            *
+*   Copyright (C) 2020-2021 Neo-Mind                                       *
 *                                                                          *
 *   This file is a part of WARP project                                    *
 *                                                                          *
@@ -22,7 +22,7 @@
 *                                                                          *
 *   Author(s)     : Neo-Mind                                               *
 *   Created Date  : 2020-12-11                                             *
-*   Last Modified : 2020-12-17                                             *
+*   Last Modified : 2021-04-04                                             *
 *                                                                          *
 \**************************************************************************/
 
@@ -37,13 +37,12 @@ if (typeof Log == 'undefined')
 	{
 		Tee : false,
 
-		start : function(file = '')
+		start : function(file)
 		{
-			if (this.Handle !== undefined)
+			if ('Handle' in this)
 				return true;
 
-			if (file.isEmpty())
-				file = "Comment_Log_" + System.LocalTime.toISOString().replace(/:/g, '_') + ".txt";
+			file = file ?? "Comment_Log_" + System.LocalTime.toISOString().replace(/:/g, '_') + ".txt";
 
 			let fp = new TextFile(OUTDIR + file, "w");
 			if (fp.Valid)
@@ -59,19 +58,20 @@ if (typeof Log == 'undefined')
 
 		stop : function()
 		{
-			if (this.Handle !== undefined)
+			if ('Handle' in this)
 			{
 				this.Handle.Close();
 				Warp.Show(this.Handle.Path);
 			}
 
-			this.Handle = undefined;
+			delete this.Handle;
+
 			return true;
 		},
 
 		show : function()
 		{
-			if (this.Handle !== undefined)
+			if ('Handle' in this)
 			{
 				Warp.Show(this.Handle.Path);
 			}
@@ -90,13 +90,13 @@ if (typeof Log == 'undefined')
 ///
 $$ = function(txt)
 {
-	if (txt !== undefined)
+	if (txt != undefined)
 	{
-		if (Log.Handle !== undefined)
+		if ('Handle' in Log)
 			Log.Handle.WriteLine(txt);
 
 		if (Log.Tee)
-			console.debug(txt);
+			console.info(txt);
 	}
 };
 
@@ -105,12 +105,12 @@ $$ = function(txt)
 ///
 $$$ = function(txt)
 {
-	if (txt !== undefined)
+	if (txt != undefined)
 	{
-		if (Log.Handle !== undefined)
+		if ('Handle' in Log)
 			Log.Handle.WriteLine(txt);
 
-		console.debug(txt);
+		console.info(txt);
 	}
 };
 
@@ -136,7 +136,7 @@ $_ = function()
 		case 'string':
 			len = msg.length;
 
-			if (Log.Handle !== undefined)
+			if ('Handle' in Log)
 				Log.Handle.WriteLine(msg);
 
 			if (tee)
@@ -152,7 +152,7 @@ $_ = function()
 	if (len > 0)
 	{
 		let line = chr.repeat(len);
-		if (Log.Handle !== undefined)
+		if ('Handle' in Log)
 			Log.Handle.WriteLine(line);
 
 		if (tee)
@@ -178,18 +178,42 @@ $__ = function()
 ///
 _$_ = function(tee, msg)
 {
-	if (msg === undefined)
-	{
-		msg = tee;
-		tee = Log.Tee;
-	}
-
 	let args = Array.prototype.slice.call(arguments, 2);
-	args.unshift(msg.length);
-	args.unshift(tee);
+	if (typeof tee !== 'boolean')
+	{
+		args.unshift(msg);
+		args.unshift(tee.length);
+	}
+	else
+	{
+		args.unshift(msg.length);
+		args.unshift(tee);
+	}
 
 	$_(...args);
 	$_(...arguments);
+};
+
+///
+/// \brief Dump all the hex codes of a function in Output view and/or Log file
+///
+DumpFunc = function(funcName, from)
+{
+	$$(funcName + " = {");
+
+	let to = Exe.GetSectEnd(CODE);
+	while (from < to)
+	{
+		let ins = Instr.FromAddr(from);
+		if (ins.Codes[0] === 0xC3 || ins.Codes[0] === 0xC2)
+			break;
+
+		$$(TAB + ins);
+
+		from = ins.NextAddr;
+	}
+
+	$$('}');
 };
 
 // For all the following, the output will be send using 'console'
@@ -210,7 +234,7 @@ NewLine = () => console.info('') || true;
 ///
 Dump = function(name, obj)
 {
-	if (obj === undefined)
+	if (obj == undefined) //can be 0 or false so cant use !obj
 	{
 		obj = name;
 		name = obj.constructor.name;
@@ -231,7 +255,7 @@ Dump = function(name, obj)
 		name = obj.constructor.name;
 	}
 
-	if (obj === undefined)
+	if (obj == undefined) //can be 0 or false so cant use !obj
 		return false;
 
 	console.log(name, "=>");
@@ -307,8 +331,8 @@ ShowVar = function()
 	if (typeof obj !== 'object')
 		return false;
 
-	let varName = Object.keys(obj)[0];
-	if (varName === undefined)
+	let [varName] = Object.keys(obj);
+	if (!varName)
 		return false;
 
 	let prefix = args.take_if('string', '');
@@ -336,14 +360,26 @@ ShowVar = function()
 };
 
 ///
-/// \brief Shows the physical and virtual cntparts of an address
+/// \brief Shows the physical and virtual cntparts of an address.
+///        You can also provide variable wrapped in {} to display it's name as the prompt.
 ///
 ShowAddr = function()
 {
 	let args = [...arguments];
 
-	let prompt = args.take_if('string', 'Addr');
-	let addr = args.take_if('number', -1);
+	let prompt, addr;
+	let obj = args.take_if('object', null);
+	if (obj === null)
+	{
+		prompt = args.take_if('string', 'Addr');
+		addr = args.take_if('number', -1);
+	}
+	else
+	{
+		prompt = Object.keys(obj)[0];
+		addr = obj[prompt];
+	}
+
 	let type = args.take_if('object', PHYSICAL);
 
 	let phy, vir;
@@ -368,7 +404,7 @@ ShowAddr = function()
 };
 
 ///
-/// \brief Shows the physical and virtual cntparts of multiple addresses
+/// \brief Shows the physical and virtual counterparts of multiple addresses
 ///
 ShowAddrs = function()
 {
@@ -377,6 +413,15 @@ ShowAddrs = function()
 	let prompt = args.take_if('string', 'Addrs');
 
 	let addrs = args.shift();
+	if (!IsArr(addrs))
+	{
+		if (typeof(addrs) === 'object')
+		{
+			prompt = Object.keys(addrs)[0];
+			addrs = addrs[prompt];
+		}
+	}
+
 	if (!IsArr(addrs))
 		return false;
 
@@ -420,10 +465,11 @@ ShowAddrs = function()
 ResetC = () => (console.cnt = 0) || true;
 
 ///
-/// \brief Increment & display the current count along with version & build date
+/// \brief Increment the counter.
 ///
-ShowC = function()
-{
-	console.cnt = (console.cnt || 0) + 1	;
-	console.log(console.cnt, Exe.Version, Exe.BuildDate);
-};
+IncrC = () => (console.cnt = (console.cnt || 0) + 1) || true;
+
+///
+/// \brief Display the current count along with version & build date.
+///
+ShowC = () => console.log('cnt' in console ? console.cnt : 'Counter not set', Exe.Version, Exe.BuildDate) || true;
